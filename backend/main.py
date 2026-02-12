@@ -41,24 +41,27 @@ app.add_middleware(
 )
 
 
-def get_product_image(product_id: int, category: str) -> str:
+# Global image cache: {category: [list of image URLs]}
+image_cache = {}
+# Track used images per category: {category: set of used URLs}
+used_images = {}
+
+
+def fetch_category_images(category: str) -> List[str]:
     """
-    Get product image URL from Pixabay API
+    Fetch images for a category from Pixabay API
     Args:
-        product_id: Product ID for fallback
-        category: Product category for search query
+        category: Product category
     Returns:
-        Image URL resized to 400x500
+        List of image URLs
     """
-    fallback_url = f"https://picsum.photos/seed/p-{product_id}/400/500"
-    
     try:
         category = category or 'sports'
         image_query = f"sports-goods,{category.lower().replace(' ', '-')}"
         api_key = os.getenv('PIXABAY_API_KEY')
         
         if not api_key:
-            return fallback_url
+            return []
         
         response = requests.get(
             "https://pixabay.com/api/",
@@ -66,9 +69,9 @@ def get_product_image(product_id: int, category: str) -> str:
                 "key": api_key,
                 "q": image_query,
                 "image_type": "photo",
-                "per_page": 3
+                "per_page": 20
             },
-            timeout=2
+            timeout=3
         )
         
         if response.status_code == 200:
@@ -76,13 +79,51 @@ def get_product_image(product_id: int, category: str) -> str:
             hits = data.get("hits", [])
             
             if hits:
-                # Get highest resolution image
-                best_image = max(hits, key=lambda x: x.get("imageWidth", 0) * x.get("imageHeight", 0))
-                return best_image.get("webformatURL", fallback_url)
+                sorted_images = sorted(hits, key=lambda x: x.get("imageWidth", 0) * x.get("imageHeight", 0), reverse=True)
+                return [img.get("webformatURL") for img in sorted_images if img.get("webformatURL")]
         
-        return fallback_url
-    except:
-        return fallback_url
+        return []
+    except Exception as e:
+        logger.error(f"Error fetching images for category {category}: {e}")
+        return []
+
+
+def get_product_image(product_id: int, category: str) -> str:
+    """
+    Get product image URL from cache or fetch new batch
+    Args:
+        product_id: Product ID for fallback
+        category: Product category
+    Returns:
+        Image URL
+    """
+    fallback_url = f"https://picsum.photos/seed/p-{product_id}/400/500"
+    
+    category = category or 'sports'
+    
+    if category not in image_cache:
+        image_cache[category] = []
+        used_images[category] = set()
+    
+    if not image_cache[category]:
+        logger.info(f"Fetching new image batch for category: {category}")
+        new_images = fetch_category_images(category)
+        
+        if new_images:
+            unused_images = [img for img in new_images if img not in used_images[category]]
+            
+            if unused_images:
+                image_cache[category] = unused_images
+            else:
+                used_images[category] = set()
+                image_cache[category] = new_images
+    
+    if image_cache[category]:
+        image_url = image_cache[category].pop(0)
+        used_images[category].add(image_url)
+        return image_url
+    
+    return fallback_url
 
 
 # Request/Response models
