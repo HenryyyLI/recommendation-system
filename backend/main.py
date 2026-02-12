@@ -772,7 +772,6 @@ async def get_random_clients(limit: int = Query(default=10, ge=1, le=50)):
                         "TopCategory3": row[12]
                     })
                 
-                # 修复: 直接返回字典而不是用JSONResponse包装
                 return {
                     "code": 200,
                     "data": clients
