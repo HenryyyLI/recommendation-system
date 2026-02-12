@@ -529,6 +529,9 @@ async def get_recommendations(request: RecommendationRequest):
         product_map = {}
         for row in products_data:
             store_countries = [c for c in row[18] if c] if row[18] else []
+            # Build category-specific image query for better sports goods images
+            category = row[1] or 'sports'
+            image_query = f"sports-goods,{category.lower().replace(' ', '-')}"
             # Use row[0] as key (int) for lookup, but convert to string in response
             product_map[row[0]] = {
                 "ProductID": str(row[0]),  # Convert to string for BigInt safety
@@ -548,7 +551,7 @@ async def get_recommendations(request: RecommendationRequest):
                 "StockCountries": row[14] or 0,
                 "StoreIDs": [str(s) for s in row[17] if s] if row[17] else [],  # Convert to strings
                 "Rating": round(random.uniform(0, 5), 1),
-                "ImageURL": f"https://picsum.photos/seed/p-{row[0]}/400/500",
+                "ImageURL": f"https://source.unsplash.com/400x500/?{image_query}",
                 "StoreCountry": store_countries[0] if store_countries else None,
                 "FirstSaleDate": row[15].isoformat() if row[15] else None,
                 "LastSaleDate": row[16].isoformat() if row[16] else None
@@ -968,10 +971,14 @@ async def get_order_detail(orderId: int, clientId: Optional[int] = None):
             # Generate product name from FamilyLevel1 + FamilyLevel2
             product_name = f"{row[6]} {row[7]}" if row[6] and row[7] else (row[6] or row[7] or "Unknown Product")
             
+            # Build category-specific image query for better sports goods images
+            category = row[8] or 'sports'
+            image_query = f"sports-goods,{category.lower().replace(' ', '-')}"
+            
             items.append({
                 "productId": str(row[5]),  # Convert to string for BigInt safety
                 "productName": product_name,
-                "productImage": f"https://picsum.photos/seed/p-{row[5]}/400/500",
+                "productImage": f"https://source.unsplash.com/400x500/?{image_query}",
                 "category": row[8],
                 "storeId": str(row[9]),  # Convert to string for BigInt safety
                 "storeName": row[10],
