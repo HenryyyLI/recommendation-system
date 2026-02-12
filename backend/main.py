@@ -476,7 +476,7 @@ async def get_recommendations(request: RecommendationRequest):
         with psycopg2.connect(**db_config) as conn:
             with conn.cursor() as cursor:
                 category_filter = ""
-                params = [tuple(recommended_ids)]
+                params = [recommended_ids]
                 if request.category:
                     category_filter = ' AND "Category" = %s'
                     params.append(request.category)
