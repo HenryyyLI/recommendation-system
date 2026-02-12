@@ -12,6 +12,7 @@ import numpy as np
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
+import stripe
 
 from models.two_tower_model import TwoTowerRecall
 from models.item_cf import ItemCF
@@ -24,6 +25,9 @@ from models.reranking import Reranking
 
 # Load environment variables
 load_dotenv()
+
+# Configure Stripe
+stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -92,6 +96,26 @@ class TransactionRequest(BaseModel):
 class TransactionResponse(BaseModel):
     code: int
     data: Dict[str, Any]
+
+
+class CheckoutItem(BaseModel):
+    productId: str
+    name: str
+    price: float
+    quantity: int
+    image: Optional[str] = None
+
+
+class CheckoutRequest(BaseModel):
+    clientId: str
+    items: List[CheckoutItem]
+    successUrl: str
+    cancelUrl: str
+
+
+class CheckoutResponse(BaseModel):
+    code: int
+    data: Dict[str, str]
 
 
 class ClientInfoResponse(BaseModel):
@@ -663,6 +687,49 @@ async def create_transaction(request: TransactionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/checkout/create-session", response_model=CheckoutResponse)
+async def create_checkout_session(request: CheckoutRequest):
+    """
+    Create Stripe Checkout Session
+    """
+
+    try:
+        line_items = [
+            {
+                "price_data": {
+                    "currency": "eur",
+                    "product_data": {
+                        "name": item.name,
+                        "images": [item.image] if item.image else [],
+                    },
+                    "unit_amount": int(item.price * 100),  # Stripe uses cents
+                },
+                "quantity": item.quantity,
+            }
+            for item in request.items
+        ]
+        
+        session = stripe.checkout.Session.create(
+            line_items=line_items,
+            mode="payment",
+            success_url=request.successUrl,
+            cancel_url=request.cancelUrl,
+            metadata={"client_id": request.clientId},
+        )
+        
+        return CheckoutResponse(
+            code=200,
+            data={
+                "sessionUrl": session.url,
+                "sessionId": session.id,
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error creating Stripe session: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v1/clients/random")
 async def get_random_clients(limit: int = Query(default=10, ge=1, le=50)):
     """
@@ -705,10 +772,11 @@ async def get_random_clients(limit: int = Query(default=10, ge=1, le=50)):
                         "TopCategory3": row[12]
                     })
                 
-                return JSONResponse(content={
+                # 修复: 直接返回字典而不是用JSONResponse包装
+                return {
                     "code": 200,
                     "data": clients
-                })
+                }
     
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
