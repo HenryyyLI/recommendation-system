@@ -12,7 +12,7 @@ import numpy as np
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
-import stripe
+import requests
 
 from models.two_tower_model import TwoTowerRecall
 from models.item_cf import ItemCF
@@ -25,9 +25,6 @@ from models.reranking import Reranking
 
 # Load environment variables
 load_dotenv()
-
-# Configure Stripe
-stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,6 +39,50 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def get_product_image(product_id: int, category: str) -> str:
+    """
+    Get product image URL from Pixabay API
+    Args:
+        product_id: Product ID for fallback
+        category: Product category for search query
+    Returns:
+        Image URL resized to 400x500
+    """
+    fallback_url = f"https://picsum.photos/seed/p-{product_id}/400/500"
+    
+    try:
+        category = category or 'sports'
+        image_query = f"sports-goods,{category.lower().replace(' ', '-')}"
+        api_key = os.getenv('PIXABAY_API_KEY')
+        
+        if not api_key:
+            return fallback_url
+        
+        response = requests.get(
+            "https://pixabay.com/api/",
+            params={
+                "key": api_key,
+                "q": image_query,
+                "image_type": "photo",
+                "per_page": 3
+            },
+            timeout=2
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            hits = data.get("hits", [])
+            
+            if hits:
+                # Get highest resolution image
+                best_image = max(hits, key=lambda x: x.get("imageWidth", 0) * x.get("imageHeight", 0))
+                return best_image.get("webformatURL", fallback_url)
+        
+        return fallback_url
+    except:
+        return fallback_url
 
 
 # Request/Response models
@@ -90,32 +131,11 @@ class TransactionRequest(BaseModel):
     items: List[TransactionItem]
     totalAmount: float
     paymentMethod: str
-    stripePaymentIntentId: Optional[str] = None
 
 
 class TransactionResponse(BaseModel):
     code: int
     data: Dict[str, Any]
-
-
-class CheckoutItem(BaseModel):
-    productId: str
-    name: str
-    price: float
-    quantity: int
-    image: Optional[str] = None
-
-
-class CheckoutRequest(BaseModel):
-    clientId: str
-    items: List[CheckoutItem]
-    successUrl: str
-    cancelUrl: str
-
-
-class CheckoutResponse(BaseModel):
-    code: int
-    data: Dict[str, str]
 
 
 class ClientInfoResponse(BaseModel):
@@ -529,9 +549,6 @@ async def get_recommendations(request: RecommendationRequest):
         product_map = {}
         for row in products_data:
             store_countries = [c for c in row[18] if c] if row[18] else []
-            # Build category-specific image query for better sports goods images
-            category = row[1] or 'sports'
-            image_query = f"sports-goods,{category.lower().replace(' ', '-')}"
             # Use row[0] as key (int) for lookup, but convert to string in response
             product_map[row[0]] = {
                 "ProductID": str(row[0]),  # Convert to string for BigInt safety
@@ -551,7 +568,7 @@ async def get_recommendations(request: RecommendationRequest):
                 "StockCountries": row[14] or 0,
                 "StoreIDs": [str(s) for s in row[17] if s] if row[17] else [],  # Convert to strings
                 "Rating": round(random.uniform(0, 5), 1),
-                "ImageURL": f"https://source.unsplash.com/400x500/?{image_query}",
+                "ImageURL": get_product_image(row[0], row[1]),
                 "StoreCountry": store_countries[0] if store_countries else None,
                 "FirstSaleDate": row[15].isoformat() if row[15] else None,
                 "LastSaleDate": row[16].isoformat() if row[16] else None
@@ -687,49 +704,6 @@ async def create_transaction(request: TransactionRequest):
     
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/checkout/create-session", response_model=CheckoutResponse)
-async def create_checkout_session(request: CheckoutRequest):
-    """
-    Create Stripe Checkout Session
-    """
-
-    try:
-        line_items = [
-            {
-                "price_data": {
-                    "currency": "eur",
-                    "product_data": {
-                        "name": item.name,
-                        "images": [item.image] if item.image else [],
-                    },
-                    "unit_amount": int(item.price * 100),  # Stripe uses cents
-                },
-                "quantity": item.quantity,
-            }
-            for item in request.items
-        ]
-        
-        session = stripe.checkout.Session.create(
-            line_items=line_items,
-            mode="payment",
-            success_url=request.successUrl,
-            cancel_url=request.cancelUrl,
-            metadata={"client_id": request.clientId},
-        )
-        
-        return CheckoutResponse(
-            code=200,
-            data={
-                "sessionUrl": session.url,
-                "sessionId": session.id,
-            }
-        )
-    
-    except Exception as e:
-        logger.error(f"Error creating Stripe session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -971,14 +945,10 @@ async def get_order_detail(orderId: int, clientId: Optional[int] = None):
             # Generate product name from FamilyLevel1 + FamilyLevel2
             product_name = f"{row[6]} {row[7]}" if row[6] and row[7] else (row[6] or row[7] or "Unknown Product")
             
-            # Build category-specific image query for better sports goods images
-            category = row[8] or 'sports'
-            image_query = f"sports-goods,{category.lower().replace(' ', '-')}"
-            
             items.append({
                 "productId": str(row[5]),  # Convert to string for BigInt safety
                 "productName": product_name,
-                "productImage": f"https://source.unsplash.com/400x500/?{image_query}",
+                "productImage": get_product_image(row[5], row[8]),
                 "category": row[8],
                 "storeId": str(row[9]),  # Convert to string for BigInt safety
                 "storeName": row[10],
