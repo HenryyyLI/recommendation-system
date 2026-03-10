@@ -714,7 +714,7 @@ async def batch_events(request: EventBatchRequest):
                 }
                 producer.produce(
                     topic=KAFKA_TOPIC,
-                    key=event.clientId,
+                    key=str(event.clientId),
                     value=json.dumps(message)
                 )
                 accepted += 1
