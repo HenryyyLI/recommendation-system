@@ -69,7 +69,7 @@ used_images = {}
 
 def fetch_category_images(category: str) -> List[str]:
     """
-    Fetch images for a category from Pixabay API
+    Fetch category images from Pixabay API
     Args:
         category: Product category
     Returns:
