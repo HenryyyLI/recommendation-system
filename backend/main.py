@@ -12,7 +12,9 @@ import numpy as np
 import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
+from confluent_kafka import Producer
 import requests
+import json
 
 from models.two_tower_model import TwoTowerRecall
 from models.item_cf import ItemCF
@@ -25,6 +27,24 @@ from models.reranking import Reranking
 
 # Load environment variables
 load_dotenv()
+
+def get_kafka_config():
+    return {
+        'bootstrap.servers': os.getenv('CONFLUENT_BOOTSTRAP_SERVERS'),
+        'security.protocol': os.getenv('CONFLUENT_SECURITY_PROTOCOL'),
+        'sasl.mechanisms': os.getenv('CONFLUENT_SASL_MECHANISMS'),
+        'sasl.username': os.getenv('CONFLUENT_API_KEY'),
+        'sasl.password': os.getenv('CONFLUENT_API_SECRET'),
+        'session.timeout.ms': os.getenv('CONFLUENT_SESSION_TIMEOUT_MS'),
+        'client.id': os.getenv('CONFLUENT_CLIENT_ID'),
+    }
+
+# Initialize Kafka producer
+kafka_config = get_kafka_config()
+producer = Producer(kafka_config)
+
+KAFKA_TOPIC = "user_events"
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -650,36 +670,60 @@ async def batch_events(request: EventBatchRequest):
     """
 
     try:
-        db_config = get_db_config()
+        # db_config = get_db_config()
         accepted = 0
         failed = 0
-        
-        with psycopg2.connect(**db_config) as conn:
-            with conn.cursor() as cursor:
-                for event in request.events:
-                    try:
-                        cursor.execute("""
-                        INSERT INTO user_events 
-                        ("ClientID", "EventType", "ProductID", "Timestamp", 
-                         "SessionID", "Page", "Position", "Metadata")
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            event.clientId,
-                            event.eventType,
-                            event.productId,
-                            datetime.fromisoformat(event.timestamp.replace('Z', '+00:00')),
-                            event.sessionId,
-                            event.page,
-                            event.position,
-                            psycopg2.extras.Json(event.metadata) if event.metadata else None
-                        ))
-                        accepted += 1
-                    except Exception as e:
-                        logger.error(f"Error inserting event: {e}")
-                        failed += 1
-                
-                conn.commit()
-        
+
+        # with psycopg2.connect(**db_config) as conn:
+        #     with conn.cursor() as cursor:
+        #         for event in request.events:
+        #             try:
+        #                 cursor.execute("""
+        #                 INSERT INTO user_events
+        #                 ("ClientID", "EventType", "ProductID", "Timestamp",
+        #                  "SessionID", "Page", "Position", "Metadata")
+        #                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        #                 """, (
+        #                     event.clientId,
+        #                     event.eventType,
+        #                     event.productId,
+        #                     datetime.fromisoformat(event.timestamp.replace('Z', '+00:00')),
+        #                     event.sessionId,
+        #                     event.page,
+        #                     event.position,
+        #                     psycopg2.extras.Json(event.metadata) if event.metadata else None
+        #                 ))
+        #                 accepted += 1
+        #             except Exception as e:
+        #                 logger.error(f"Error inserting event: {e}")
+        #                 failed += 1
+        #
+        #         conn.commit()
+
+        for event in request.events:
+            try:
+                message = {
+                    "clientId": event.clientId,
+                    "eventType": event.eventType,
+                    "productId": event.productId,
+                    "timestamp": event.timestamp,
+                    "sessionId": event.sessionId,
+                    "page": event.page,
+                    "position": event.position,
+                    "metadata": event.metadata
+                }
+                producer.produce(
+                    topic=KAFKA_TOPIC,
+                    key=event.clientId,
+                    value=json.dumps(message)
+                )
+                accepted += 1
+            except Exception as e:
+                logger.error(f"Error producing event: {e}")
+                failed += 1
+
+        producer.flush()
+
         return EventBatchResponse(
             code=200,
             data={
@@ -687,7 +731,7 @@ async def batch_events(request: EventBatchRequest):
                 "failed": failed
             }
         )
-    
+
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
