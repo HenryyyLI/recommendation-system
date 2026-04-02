@@ -670,35 +670,35 @@ async def batch_events(request: EventBatchRequest):
     """
 
     try:
-        db_config = get_db_config()
+        # db_config = get_db_config()
         accepted = 0
         failed = 0
 
-        with psycopg2.connect(**db_config) as conn:
-            with conn.cursor() as cursor:
-                for event in request.events:
-                    try:
-                        cursor.execute("""
-                        INSERT INTO user_events
-                        ("ClientID", "EventType", "ProductID", "Timestamp",
-                         "SessionID", "Page", "Position", "Metadata")
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            event.clientId,
-                            event.eventType,
-                            event.productId,
-                            datetime.fromisoformat(event.timestamp.replace('Z', '+00:00')),
-                            event.sessionId,
-                            event.page,
-                            event.position,
-                            psycopg2.extras.Json(event.metadata) if event.metadata else None
-                        ))
-                        accepted += 1
-                    except Exception as e:
-                        logger.error(f"Error inserting event: {e}")
-                        failed += 1
+        # with psycopg2.connect(**db_config) as conn:
+        #     with conn.cursor() as cursor:
+        #         for event in request.events:
+        #             try:
+        #                 cursor.execute("""
+        #                 INSERT INTO user_events
+        #                 ("ClientID", "EventType", "ProductID", "Timestamp",
+        #                  "SessionID", "Page", "Position", "Metadata")
+        #                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        #                 """, (
+        #                     event.clientId,
+        #                     event.eventType,
+        #                     event.productId,
+        #                     datetime.fromisoformat(event.timestamp.replace('Z', '+00:00')),
+        #                     event.sessionId,
+        #                     event.page,
+        #                     event.position,
+        #                     psycopg2.extras.Json(event.metadata) if event.metadata else None
+        #                 ))
+        #                 accepted += 1
+        #             except Exception as e:
+        #                 logger.error(f"Error inserting event: {e}")
+        #                 failed += 1
         
-                conn.commit()
+        #         conn.commit()
 
         # for event in request.events:
         #     try:
